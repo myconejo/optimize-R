@@ -50,7 +50,8 @@ MLP <- nn_module(
         
     },
     
-    initialize_weights = function() {
+    initialize_weights = function(seed = 42) {
+        torch_manual_seed(seed)
         nn_init_kaiming_uniform_(self$fc1$weight, nonlinearity = "relu")
         nn_init_constant_(self$fc1$bias, 0)
         
@@ -104,11 +105,14 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             cat(paste(weight_vec, collapse = " "), "\n", file = w_dir, append = TRUE)
         }
         
+        train_loss <- NULL
+        
         closure <- function() {
             optimizer$zero_grad()
             output <- model(x)
             loss <- criterion(output, y)
             loss$backward()
+            train_loss <<- loss
             
             # dump parameters
             params <- model$named_parameters()
@@ -135,12 +139,12 @@ train_model <- function(model, optimizer, epochs, opt_name) {
                     cat(paste(grad_vec, collapse = " "), "\n", file = g_dir, append = TRUE)
                 }
             }
-            
+
             loss
         }
         
         # Update parameters
-        optimizer$step(closure = closure)
+        optimizer$step(closure)
         
         # Compute parameter delta
         params <- model$named_parameters()
@@ -173,7 +177,7 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             test_loss <- criterion(output, Y_test_tensor)
         })
         
-        cat(sprintf("Epoch %d || Train Loss %f || Test Loss %f\n", epoch, loss$item(), test_loss$item()))
+        cat(sprintf("Epoch %d || Train Loss %f || Test Loss %f\n", epoch, train_loss$item(), test_loss$item()))
     }
     # return the test loss
     return(test_loss)
@@ -187,6 +191,7 @@ opt_names = c("GD", "MOMENTUM", "NAG", "LBFGS")
 
 for (opt_name in opt_names) {
     # Instantiate model
+    model <- NULL
     model <- MLP(input_dim = 4, hidden_dim = 2, output_dim = 3)
     model$to(device = device)
     model$initialize_weights()
