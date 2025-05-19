@@ -11,6 +11,7 @@ iris <- iris %>%
 
 # Shuffle rows and split into train/test
 set.seed(42)
+torch_manual_seed(42)
 n <- nrow(iris)
 train_idx <- sample(1:n, size = 0.8 * n)  # 80% train
 test_idx <- setdiff(1:n, train_idx)
@@ -78,6 +79,7 @@ train_model <- function(model, optimizer, epochs, opt_name) {
         y <- Y_train_tensor
         
         prev_params = list()
+        global_g_dir <- NULL
         
         params <- model$named_parameters()
         for (p in seq_along(params)) {
@@ -85,11 +87,19 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             name <- names(params)[p]
             param <- params[[p]]
             
+            if (param$ndim > 1) {
+                temp_param <- param$detach()$transpose(1, 2)$contiguous()
+                # temp_grad <- param$grad$detach()$transpose(1, 2)$contiguous()
+            } else {
+                temp_param <- param$detach()
+                # temp_grad <- param$grad$detach()
+            }
+            
             # Store pre-update parameter
-            prev_params <- append(prev_params, param)
+            prev_params[[p]] <- param$detach()$clone()
             
             # Flatten the parameter tensor
-            weight_vec <- as.numeric(param$view(-1)$to(device = "cpu"))
+            weight_vec <- as.numeric(temp_param$view(-1)$to(device = "cpu"))
             
             # Define directory to dump
             w_dir <- paste(name, "W.txt", sep="-")
@@ -100,6 +110,18 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             if (!file.exists(w_dir)) {
                 file.create(w_dir)
             }
+            
+            # Define directory to dump
+            g_dir <- paste(name, "G.txt", sep="-")
+            g_dir <- paste(opt_name, g_dir, sep="-")
+            g_dir <- paste("z-", g_dir, sep="")
+            
+            # Create dump file
+            if (!file.exists(g_dir)) {
+                file.create(g_dir)
+            }
+            
+            cat("_ ", file = g_dir, append = TRUE)
             
             # dump weights and gradients
             cat(paste(weight_vec, collapse = " "), "\n", file = w_dir, append = TRUE)
@@ -120,14 +142,20 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             for (p in seq_along(params)) {
                 name <- names(params)[p]
                 param <- params[[p]]
+
+                if (param$ndim > 1) {
+                    temp_grad <- param$grad$detach()$transpose(1, 2)$contiguous()
+                } else {
+                    temp_grad <- param$grad$detach()
+                }
                 
                 # Flatten the parameter tensor
-                grad_vec <- if (!is.null(param$grad)) as.numeric(param$grad$view(-1)$to(device = "cpu")) else NULL
+                grad_vec <- if (!is.null(param$grad)) as.numeric(temp_grad$view(-1)$to(device = "cpu")) else NULL
                 
                 # Define directory to dump
                 g_dir <- paste(name, "G.txt", sep="-")
                 g_dir <- paste(opt_name, g_dir, sep="-")
-                g_dir <- paste("z-", g_dir, sep="")
+                g_dir <- paste("Z-", g_dir, sep="")
                 
                 # Create dump file
                 if (!file.exists(g_dir)) {
@@ -155,6 +183,9 @@ train_model <- function(model, optimizer, epochs, opt_name) {
             
             # Flatten the parameter tensor
             delta <- param - prev_params[[p]]
+            if (delta$ndim > 1) {
+                delta <- delta$transpose(1,2)$contiguous()
+            }
             delta_vec <- as.numeric(delta$view(-1)$to(device = "cpu"))
             
             # Define directory to dump
@@ -187,7 +218,7 @@ train_model <- function(model, optimizer, epochs, opt_name) {
 # Main Routine
 # Hyperparameters
 epochs <- 50
-opt_names = c("GD", "MOMENTUM", "NAG", "LBFGS")
+opt_names = c("GD", "MOMENTUM", "LBFGS")
 
 for (opt_name in opt_names) {
     # Instantiate model
@@ -214,6 +245,7 @@ for (opt_name in opt_names) {
     }
     
     test_loss <- train_model(model = model, optimizer = optimizer, epochs = epochs, opt_name = opt_name)
+
     cat("=====================================================================\n\n")
 }
 
